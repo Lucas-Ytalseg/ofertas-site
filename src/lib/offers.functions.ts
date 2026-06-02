@@ -2,7 +2,6 @@ import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 
-// Páginas públicas de ofertas de cada marketplace
 const MARKETPLACE_PAGES: Record<string, { name: string; url: string }> = {
   mercadolivre: { name: "Mercado Livre", url: "https://www.mercadolivre.com.br/ofertas" },
   amazon:       { name: "Amazon BR",     url: "https://www.amazon.com.br/gp/goldbox" },
@@ -44,14 +43,13 @@ const ProductSchema = z.object({
 
 const ExtractionSchema = z.object({ products: z.array(ProductSchema) });
 
-// ── Firecrawl scraping ────────────────────────────────────────────────────────
 type FirecrawlFormat =
   | string
   | { type: "json"; prompt?: string; schema?: Record<string, unknown> };
 
 async function firecrawlScrape(url: string, opts: { formats?: FirecrawlFormat[] } = {}) {
   const apiKey = process.env.FIRECRAWL_API_KEY;
-  if (!apiKey) throw new Error("FIRECRAWL_API_KEY não configurado");
+  if (!apiKey) throw new Error("FIRECRAWL_API_KEY nao configurado");
   const res = await fetch("https://api.firecrawl.dev/v2/scrape", {
     method: "POST",
     headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
@@ -67,43 +65,36 @@ async function firecrawlScrape(url: string, opts: { formats?: FirecrawlFormat[] 
   return data?.data ?? data;
 }
 
-// ── Google Gemini (direto, sem intermediário Lovable) ─────────────────────────
 async function aiExtract<T>(
   prompt: string,
   schema: z.ZodSchema<T>,
   content: string,
-  model = "gemini-2.0-flash",
 ): Promise<T> {
-  const key = process.env.GEMINI_API_KEY;
-  if (!key) throw new Error("GEMINI_API_KEY não configurado");
+  const key = process.env.GROQ_API_KEY;
+  if (!key) throw new Error("GROQ_API_KEY nao configurado");
 
-  const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`;
-
-  const res = await fetch(endpoint, {
+  const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Authorization": `Bearer ${key}`,
+      "Content-Type": "application/json",
+    },
     body: JSON.stringify({
-      contents: [
-        {
-          role: "user",
-          parts: [
-            {
-              text: `Você extrai dados estruturados de páginas em português. Responda APENAS JSON válido, sem markdown, sem \`\`\`.\n\n${prompt}\n\nConteúdo:\n${content.slice(0, 18000)}`,
-            },
-          ],
-        },
-      ],
-      generationConfig: {
-        responseMimeType: "application/json",
-        temperature: 0.1,
-      },
+      model: "llama-3.3-70b-versatile",
+      messages: [{
+        role: "user",
+        content: `Voce extrai dados estruturados de paginas em portugues. Responda APENAS JSON valido, sem markdown.\n\n${prompt}\n\nConteudo:\n${content.slice(0, 10000)}`,
+      }],
+      temperature: 0.1,
+      response_format: { type: "json_object" },
+      max_tokens: 4096,
     }),
   });
 
   const data = await res.json();
-  if (!res.ok) throw new Error(`Gemini ${res.status}: ${JSON.stringify(data).slice(0, 300)}`);
+  if (!res.ok) throw new Error(`Groq ${res.status}: ${JSON.stringify(data).slice(0, 300)}`);
 
-  const raw: string = data?.candidates?.[0]?.content?.parts?.[0]?.text ?? "{}";
+  const raw: string = data?.choices?.[0]?.message?.content ?? "{}";
   const cleaned = raw.replace(/^```(?:json)?/i, "").replace(/```$/, "").trim();
 
   let parsed: unknown;
@@ -134,33 +125,29 @@ async function aiExtract<T>(
   return schema.parse(obj);
 }
 
-// ── Schema JSON para produto individual ───────────────────────────────────────
 const PRODUCT_JSON_SCHEMA = {
   type: "object",
   properties: {
-    name:           { type: ["string"],           description: "Nome/título completo do produto" },
-    price:          { type: ["number", "null"],   description: "Preço atual em reais (apenas número)" },
-    original_price: { type: ["number", "null"],   description: "Preço antes do desconto, se houver" },
+    name:           { type: ["string"],           description: "Nome completo do produto" },
+    price:          { type: ["number", "null"],   description: "Preco atual em reais (apenas numero)" },
+    original_price: { type: ["number", "null"],   description: "Preco antes do desconto" },
     image_url:      { type: ["string", "null"],   description: "URL absoluta da imagem principal" },
     rating:         { type: ["number", "null"] },
     review_count:   { type: ["number", "null"] },
-    category:       { type: ["string", "null"],   description: "Eletrônicos, Roupas, Casa e Cozinha, Beleza, Esportes ou Outros" },
+    category:       { type: ["string", "null"],   description: "Eletronicos, Roupas, Casa e Cozinha, Beleza, Esportes ou Outros" },
   },
   required: ["name"],
 } as const;
 
-// ── Importar produto por URL ──────────────────────────────────────────────────
 export const importProductFromUrl = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input) => z.object({ url: z.string().url() }).parse(input))
   .handler(async ({ data }) => {
-    // 1) Firecrawl extração nativa JSON
     const scraped = await firecrawlScrape(data.url, {
       formats: [
         {
           type: "json",
-          prompt:
-            "Extraia os dados do produto principal desta página de loja. Preços em reais como número (sem R$, sem formatação). image_url deve ser a URL absoluta da imagem principal do produto.",
+          prompt: "Extraia os dados do produto principal desta pagina de loja. Precos em reais como numero. image_url deve ser URL absoluta da imagem principal.",
           schema: PRODUCT_JSON_SCHEMA as unknown as Record<string, unknown>,
         },
         "markdown",
@@ -189,16 +176,14 @@ export const importProductFromUrl = createServerFn({ method: "POST" })
       category       = typeof j.category === "string" ? j.category : null;
     }
 
-    // 2) Fallback Gemini via markdown se JSON veio vazio
     if (!name || (price == null && !image_url)) {
       const markdown: string = scraped?.markdown ?? "";
       if (markdown.length > 200) {
         try {
           const extracted = await aiExtract(
-            `Extraia os dados do produto principal desta página. Retorne JSON {"products":[{name, price (número em reais), original_price (número), image_url (URL absoluta), rating (0-5), review_count, category}]}.`,
+            `Extraia os dados do produto principal desta pagina. Retorne JSON {"products":[{name, price (numero em reais), original_price (numero), image_url (URL absoluta), rating (0-5), review_count, category}]}.`,
             ExtractionSchema,
             markdown,
-            "gemini-2.0-flash",
           );
           const p = extracted.products[0];
           if (p) {
@@ -210,11 +195,10 @@ export const importProductFromUrl = createServerFn({ method: "POST" })
             review_count   = review_count   ?? p.review_count   ?? null;
             category       = category       ?? p.category       ?? null;
           }
-        } catch { /* ignora, checamos name abaixo */ }
+        } catch { /* ignora */ }
       }
     }
 
-    // 3) Fallback metadados OG
     if (!image_url && typeof meta?.ogImage === "string") image_url = meta.ogImage;
     if (!name) {
       const metaTitle = typeof meta?.ogTitle === "string" ? meta.ogTitle
@@ -224,19 +208,16 @@ export const importProductFromUrl = createServerFn({ method: "POST" })
     }
 
     if (!name) {
-      throw new Error(
-        "Não consegui extrair o produto desta página. A loja pode estar bloqueando o acesso (comum no Shopee). Tente outro link ou cadastre manualmente.",
-      );
+      throw new Error("Nao consegui extrair o produto desta pagina. Tente outro link ou cadastre manualmente.");
     }
 
     const warnings: string[] = [];
-    if (price == null) warnings.push("Preço não detectado — edite manualmente.");
-    if (!image_url)    warnings.push("Imagem não detectada — adicione no editor.");
+    if (price == null) warnings.push("Preco nao detectado - edite manualmente.");
+    if (!image_url)    warnings.push("Imagem nao detectada - adicione no editor.");
 
     return { name, price, original_price, image_url, url: data.url, rating, review_count, category, source_url: data.url, warning: warnings.length ? warnings.join(" ") : null };
   });
 
-// ── Descobrir ofertas em um marketplace ──────────────────────────────────────
 export const discoverDeals = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input) =>
@@ -258,14 +239,15 @@ export const discoverDeals = createServerFn({ method: "POST" })
     const prompt = `Marketplace: ${mp.name}
 Pesquisa: "${query}"
 
-Encontre produtos reais e relevantes nesta página de ofertas. Regras:
-- Retorne apenas produtos relacionados à pesquisa (ou os melhores produtos se não houver pesquisa).
+Encontre produtos reais nesta pagina de ofertas. Regras:
+- Retorne apenas produtos relacionados a pesquisa (ou os melhores se nao houver pesquisa).
 - Priorize produtos populares, bem avaliados e com maiores descontos.
-- Nunca invente informações. Não retorne produtos sem imagem ou sem link.
+- Nunca invente informacoes. Nao retorne produtos sem imagem ou sem link.
 - Remova duplicados.
-- Se não houver resultados, retorne {"products":[]}.
+- Se nao houver resultados, retorne {"products":[]}.
 
-Formato obrigatório — JSON {"products":[{
+Formato JSON obrigatorio:
+{"products":[{
   "name": "",
   "price": 0,
   "original_price": 0,
@@ -279,14 +261,14 @@ Formato obrigatório — JSON {"products":[{
   "category": ""
 }]}
 
-price, original_price, discount_percentage, rating e review_count = NÚMEROS (sem R$, sem %).
-Todas as URLs devem ser absolutas (https://...).`;
+price, original_price, discount_percentage, rating e review_count = NUMEROS (sem R$, sem %).
+Todas as URLs devem ser absolutas (https://).`;
 
     let extracted: z.infer<typeof ExtractionSchema> = { products: [] };
     try {
       extracted = await aiExtract(prompt, ExtractionSchema, markdown);
     } catch (err) {
-      console.error("discoverDeals: Gemini parse failed", err);
+      console.error("discoverDeals: Groq parse failed", err);
     }
 
     const seen     = new Set<string>();
