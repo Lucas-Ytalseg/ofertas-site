@@ -12,6 +12,32 @@ const MARKETPLACE_PAGES: Record<string, { name: string; url: string }> = {
   kabum:        { name: "Kabum",         url: "https://www.kabum.com.br/ofertas" },
 };
 
+// Tags de afiliado
+const AFFILIATE_TAGS = {
+  amazon:       "directofert0f-20",
+  mercadolivre: "lucasberg",
+  magalu:       "directofertas12",
+};
+
+function addAffiliateTag(url: string, marketplace: string): string {
+  try {
+    const u = new URL(url);
+    if (marketplace === "amazon" && (u.hostname.includes("amazon.com.br") || u.hostname.includes("amzn.to"))) {
+      u.searchParams.set("tag", AFFILIATE_TAGS.amazon);
+      return u.toString();
+    }
+    if (marketplace === "mercadolivre" && u.hostname.includes("mercadolivre.com.br")) {
+      u.searchParams.set("matt_tool", AFFILIATE_TAGS.mercadolivre);
+      return u.toString();
+    }
+    if (marketplace === "magalu" && u.hostname.includes("magazineluiza.com.br")) {
+      // Magalu usa subdomínio magazinevoce
+      return `https://www.magazinevoce.com.br/magazine${AFFILIATE_TAGS.magalu}/${u.pathname}${u.search}`;
+    }
+  } catch { /* ignora URLs inválidas */ }
+  return url;
+}
+
 function toNum(v: unknown): number | null {
   if (v === null || v === undefined || v === "") return null;
   if (typeof v === "number") return Number.isFinite(v) ? v : null;
@@ -50,7 +76,7 @@ async function groqExtract(prompt: string, content: string, apiKey: string) {
     }),
   });
   const data = await res.json();
-  if (!res.ok) throw new Error(`Groq ${res.status}: ${JSON.stringify(data).slice(0,200)}`);
+  if (!res.ok) throw new Error(`Groq ${res.status}`);
   const raw: string = data?.choices?.[0]?.message?.content ?? "{}";
   try { return JSON.parse(raw); } catch { return { products: [] }; }
 }
@@ -60,11 +86,9 @@ export const Route = createFileRoute("/api/discover")({
     handlers: {
       POST: async ({ request }: { request: Request }) => {
         try {
-          // Pega as chaves de qualquer fonte disponível
-          const firecrawlKey = process.env.FIRECRAWL_API_KEY ?? (globalThis as any).FIRECRAWL_API_KEY ?? "";
-          const groqKey = process.env.GROQ_API_KEY ?? (globalThis as any).GROQ_API_KEY ?? "";
-
-          if (!firecrawlKey) throw new Error("FIRECRAWL_API_KEY nao configurado. process.env keys: " + Object.keys(process.env).join(","));
+          const firecrawlKey = process.env.FIRECRAWL_API_KEY ?? "";
+          const groqKey = process.env.GROQ_API_KEY ?? "";
+          if (!firecrawlKey) throw new Error("FIRECRAWL_API_KEY nao configurado");
           if (!groqKey) throw new Error("GROQ_API_KEY nao configurado");
 
           const body = await request.json();
@@ -107,7 +131,9 @@ Somente produtos com image_url e url absolutos (https://). Numeros sem R$ ou %. 
               const price = p.price as number;
               const orig = p.original_price as number;
               if (!discount && price && orig && orig > price) discount = Math.round((1 - price / orig) * 100);
-              return { ...p, discount_percentage: discount, source: mp.name, source_url: p.url ?? url };
+              // Adiciona tag de afiliado no link
+              const affiliateUrl = addAffiliateTag(String(p.url), marketplace);
+              return { ...p, discount_percentage: discount, source: mp.name, source_url: affiliateUrl, url: affiliateUrl };
             });
 
           return new Response(JSON.stringify({ marketplace: mp.name, query: q, products }), {
