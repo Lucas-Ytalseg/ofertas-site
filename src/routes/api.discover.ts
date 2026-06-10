@@ -1,15 +1,15 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { z } from "zod";
 
-const MARKETPLACE_PAGES: Record<string, { name: string; url: string }> = {
-  mercadolivre: { name: "Mercado Livre", url: "https://www.mercadolivre.com.br/ofertas" },
-  amazon:       { name: "Amazon BR",     url: "https://www.amazon.com.br/gp/goldbox" },
-  shopee:       { name: "Shopee",        url: "https://shopee.com.br/flash_sale" },
-  aliexpress:   { name: "AliExpress",    url: "https://pt.aliexpress.com/p/sales/index.html" },
-  magalu:       { name: "Magalu",        url: "https://www.magazineluiza.com.br/selecao/ofertasdodia/" },
-  americanas:   { name: "Americanas",    url: "https://www.americanas.com.br/hotsite/ofertas-do-dia" },
-  shein:        { name: "Shein",         url: "https://br.shein.com/promotion-page.html" },
-  kabum:        { name: "Kabum",         url: "https://www.kabum.com.br/ofertas" },
+const MARKETPLACE_PAGES: Record<string, { name: string; url: string; searchUrl: string }> = {
+  mercadolivre: { name: "Mercado Livre", url: "https://www.mercadolivre.com.br/ofertas",          searchUrl: "https://lista.mercadolivre.com.br/{query}" },
+  amazon:       { name: "Amazon BR",     url: "https://www.amazon.com.br/gp/goldbox",             searchUrl: "https://www.amazon.com.br/s?k={query}" },
+  shopee:       { name: "Shopee",        url: "https://shopee.com.br/flash_sale",                 searchUrl: "https://shopee.com.br/search?keyword={query}" },
+  aliexpress:   { name: "AliExpress",    url: "https://pt.aliexpress.com/p/sales/index.html",     searchUrl: "https://pt.aliexpress.com/wholesale?SearchText={query}" },
+  magalu:       { name: "Magalu",        url: "https://www.magazineluiza.com.br/selecao/ofertasdodia/", searchUrl: "https://www.magazineluiza.com.br/busca/{query}/" },
+  americanas:   { name: "Americanas",    url: "https://www.americanas.com.br/hotsite/ofertas-do-dia",   searchUrl: "https://www.americanas.com.br/busca/{query}" },
+  shein:        { name: "Shein",         url: "https://br.shein.com/promotion-page.html",         searchUrl: "https://br.shein.com/pdsearch/{query}/" },
+  kabum:        { name: "Kabum",         url: "https://www.kabum.com.br/ofertas",                 searchUrl: "https://www.kabum.com.br/busca/{query}" },
 };
 
 // Tags de afiliado
@@ -99,7 +99,9 @@ export const Route = createFileRoute("/api/discover")({
 
           const mp = MARKETPLACE_PAGES[marketplace];
           const q = (query ?? "").trim();
-          const url = q ? `${mp.url}${mp.url.includes("?") ? "&" : "?"}q=${encodeURIComponent(q)}` : mp.url;
+          const url = q
+            ? mp.searchUrl.replace("{query}", encodeURIComponent(q))
+            : mp.url;
 
           const scraped = await firecrawlScrape(url, firecrawlKey);
           const markdown: string = scraped?.markdown ?? "";
