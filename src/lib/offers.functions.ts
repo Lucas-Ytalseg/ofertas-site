@@ -1,4 +1,4 @@
-import { createServerFn } from "@tanstack/react-start";
+﻿import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 
@@ -140,7 +140,6 @@ const PRODUCT_JSON_SCHEMA = {
 } as const;
 
 export const importProductFromUrl = createServerFn({ method: "POST" })
-  .middleware([requireSupabaseAuth])
   .inputValidator((input) => z.object({ url: z.string().url() }).parse(input))
   .handler(async ({ data }) => {
     const scraped = await firecrawlScrape(data.url, {
@@ -219,7 +218,6 @@ export const importProductFromUrl = createServerFn({ method: "POST" })
   });
 
 export const discoverDeals = createServerFn({ method: "POST" })
-  .middleware([requireSupabaseAuth])
   .inputValidator((input) =>
     z.object({
       marketplace: z.enum(["mercadolivre","amazon","shopee","aliexpress","magalu","americanas","shein","kabum"]),
@@ -291,3 +289,4 @@ Todas as URLs devem ser absolutas (https://).`;
 
     return { tab: mp.name, marketplace: mp.name, query, products };
   });
+
